@@ -71,20 +71,44 @@
 未实现 `onHandleMsg` / `onClickSendBtn` / `onMemberChange` / `onNewFriend` / `onRecvPayMsg` /
 `onCreate*Menu` —— 本插件的触发源是数据库写入而不是消息事件，不需要这些回调。
 
-### 1.6 Xposed 接口
+### 1.6 Hook 接口
 
-WA 的 Hook 封装（`hookBefore` / `hookAfter` / `hookReplace` / `unhook`）需要先拿到 `Member`，
-而本项目要覆盖同一方法名的全部重载（`insert` 有 3 个重载），因此直接用 WA 运行时暴露的
-Xposed 原生接口：
+本项目使用 WA 的**内置 Hook 封装**，不使用 Xposed 原生接口：
 
 | 签名 | 用途 |
 |---|---|
-| `Set<Unhook> XposedBridge.hookAllMethods(Class, String, XC_MethodHook)` | 一次注册某个类上同名方法的全部重载 |
-| `XC_MethodHook#afterHookedMethod(MethodHookParam)` | 原方法执行后回调 |
-| `MethodHookParam#args` / `#getResult()` / `#method` | 取参数、返回值、被 Hook 的方法 |
-| `XC_MethodHook.Unhook#unhook()` | 释放 Hook（通过反射调用，避免依赖内部类名） |
+| `Object hookAfter(Member member, Consumer callback)` | 在原方法执行后回调；返回注册句柄 |
+| `void unhook(Object handle)` | 释放 `hookAfter` 返回的句柄，在 `onUnload` 中调用 |
 
-`de.robv.android.xposed.*` 在 WA 插件运行时内可用（社区在用的同类插件同样直接使用它）。
+**为什么不用 `XposedBridge` / `XC_MethodHook`**：WA 默认开启「Xposed API 调用保护」，
+插件脚本无法解析 `de.robv.android.xposed.*` 下的类型。实测（WA `1.2.7.r1499`）一旦在脚本里命名
+`XC_MethodHook`，整个插件会在加载阶段直接失败：
+
+```
+Plugin[MomentWatch]: load Failed: Sourced file: eval stream :
+  Typed variable declaration : Class: XC_MethodHook not found in namespace
+	at XC_MethodHook (eval stream:34)
+```
+
+社区里同类插件（如「僵尸粉检测」）在相同版本上也报 `Unknown class: XC_MethodHook`。
+WA 官方示例 `plugins/v127/Hd/HookDemo` 明确区分了两条路：
+
+```java
+// 内置Hook方法(hookBefore / hookAfter / hookReplace)
+onBeforeHook = hookBefore(method, param -> { log("onResume Before") });
+
+// 原生Hook方法(需关闭 Xposed API 调用保护)
+onAfterHook = XposedBridge.hookMethod(method, new XC_MethodHook() { ... });
+```
+
+因此本插件的 Hook 侧遵守两条约束：
+
+1. 只用 `hookAfter` / `unhook`；
+2. 回调里**不声明 `param` 的类型**，一律用反射读 `args` / `method` / `getResult()`，
+   代码里不出现任何 Xposed 类型名。
+
+要覆盖同一方法名的全部重载（`insert` 有多个重载），本项目自行遍历 `getDeclaredMethods()`
+逐个注册，而不是依赖 `hookAllMethods`。
 
 ## 2. 微信侧接口
 
@@ -236,8 +260,9 @@ void mwNotifyTest()
 ### 3.5 `SnsHook` 对外
 
 ```java
-int  mwHookInstall(Object hook)   // 返回成功注册的方法数；0 表示当前版本不兼容
+int  mwHookInstall()      // 返回成功注册的方法数；0 表示当前版本不兼容
 void mwHookUninstall()
+void mwSnsHandleHookParam(Object param)
 void mwSnsHandleDbWrite(Object[] args, Object result, String methodName)
 ```
 

@@ -115,12 +115,63 @@ Intent[] j3 = mwJumpBuild("", 123456789L, -1);
 checkEq("无作者时再降级到朋友圈首页", ((Intent) j3[j3.length - 1]).component.getClassName(), "com.tencent.mm.plugin.sns.ui.SnsTimeLineUI");
 checkEq("组件包名固定为微信", ((Intent) j1[0]).component.getPackageName(), "com.tencent.mm");
 
-System.out.println("\n[6] Hook 生命周期");
-int hooked = mwHookInstall(new XC_MethodHook() { protected void afterHookedMethod(XC_MethodHook.MethodHookParam p) throws Throwable { } });
-checkEq("当前环境无 WCDB 类时注册数为 0", Integer.valueOf(hooked), Integer.valueOf(0));
-check("未注册成功时不算已安装", !mwHookInstalled);
+System.out.println("\n[6] Hook 注册、回调链路与生命周期");
+String mdName(Object member) {
+    try { return String.valueOf(member.getClass().getMethod("getName", new Class[0]).invoke(member, new Object[0])); }
+    catch (Throwable t) { return ""; }
+}
+int mdIndexOfHook(String name) {
+    for (int i = 0; i < mwTestHookedMembers.size(); i++) {
+        if (name.equals(mdName(mwTestHookedMembers.get(i)))) return i;
+    }
+    return -1;
+}
+
+mwHookHandles.clear(); mwHookInstalled = false;
+mwTestHookedMembers.clear(); mwTestHookCallbacks.clear(); mwTestUnhookCount = 0;
+
+int hooked = mwHookInstall();
+checkEq("枚举并注册全部写入重载", Integer.valueOf(hooked), Integer.valueOf(8));
+checkEq("记录的目标方法数一致", Integer.valueOf(mwTestHookedMembers.size()), Integer.valueOf(8));
+check("注册成功即标记已安装", mwHookInstalled);
+check("覆盖 insert 重载", mdIndexOfHook("insert") >= 0);
+check("覆盖 insertWithOnConflict", mdIndexOfHook("insertWithOnConflict") >= 0);
+check("覆盖 replace", mdIndexOfHook("replace") >= 0);
+check("覆盖 update", mdIndexOfHook("update") >= 0);
+checkEq("不注册 delete", Integer.valueOf(mdIndexOfHook("delete")), Integer.valueOf(-1));
+checkEq("重复安装不重复注册", Integer.valueOf(mwHookInstall()), Integer.valueOf(8));
+
+// 端到端：模拟微信经 insert 写入一条关注对象的动态，驱动注册时拿到的回调
+mwConfigSetWatchList("wxid_a");
+mwMonitorStartSec = NOW; mwMaxAgeSec = 86400L; notified.clear(); mwSeenClear();
+int iIns = mdIndexOfHook("insert");
+Object cbIns = mwTestHookCallbacks.get(iIns);
+cbIns.accept(new mwtest.FakeHookParam(wargs("SnsInfo", cv("wxid_a", 999L, NOW, 1)), (java.lang.reflect.Member) mwTestHookedMembers.get(iIns), Long.valueOf(4242)));
+checkEq("Hook 回调端到端触发提醒", Integer.valueOf(notified.size()), Integer.valueOf(1));
+checkEq("insert 回调把返回值当作 localId", notified.get(0), "wxid_a|999|4242|1");
+
+// 端到端：update 的返回值是影响行数，不能当 localId
+int iUpd = mdIndexOfHook("update");
+Object cbUpd = mwTestHookCallbacks.get(iUpd);
+cbUpd.accept(new mwtest.FakeHookParam(wargs("SnsInfo", cv("wxid_a", 1000L, NOW, 1)), (java.lang.reflect.Member) mwTestHookedMembers.get(iUpd), Integer.valueOf(5)));
+checkEq("update 回调不使用行数作 localId", notified.get(1), "wxid_a|1000|-1|1");
+
+// 回调内非目标表不应触发
+cbIns.accept(new mwtest.FakeHookParam(wargs("SnsComment", cv("wxid_a", 1001L, NOW, 1)), (java.lang.reflect.Member) mwTestHookedMembers.get(iIns), Long.valueOf(11)));
+checkEq("回调内非 SnsInfo 表不触发", Integer.valueOf(notified.size()), Integer.valueOf(2));
+
 mwHookUninstall();
+checkEq("卸载逐个调用 unhook", Integer.valueOf(mwTestUnhookCount), Integer.valueOf(8));
 check("卸载后句柄清空", mwHookHandles.isEmpty());
+check("卸载后取消已安装标记", !mwHookInstalled);
+
+// 目标类不存在时应安全返回 0 且不标记已安装
+String[] savedDbClasses = MW_DB_CLASSES;
+MW_DB_CLASSES = new String[] { "com.tencent.wcdb.database.NotExist" };
+mwHookHandles.clear(); mwHookInstalled = false;
+checkEq("目标类缺失时返回 0", Integer.valueOf(mwHookInstall()), Integer.valueOf(0));
+check("目标类缺失时不标记已安装", !mwHookInstalled);
+MW_DB_CLASSES = savedDbClasses;
 
 System.out.println("\n[7] 去重账本容量与清空");
 mwSeenClear();

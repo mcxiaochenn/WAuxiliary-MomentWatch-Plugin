@@ -22,11 +22,10 @@ plugins/v127/mcxiaochen/MomentWatch/
 
 ## main.java
 
-**职责**：模块加载顺序 + WA 回调转发 + 跨模块共享的 Hook 引用。
+**职责**：模块加载顺序 + WA 回调转发。**不含任何业务逻辑与状态**。
 
 | 符号 | 类型 | 说明 |
 |---|---|---|
-| `mwDbWriteHook` | `XC_MethodHook` | 数据库写入 Hook 实例。整个插件只有一个 Hook 实例由它持有，`Service` 注册、`Service` 卸载 |
 | `onLoad()` | WA 回调 | 转发到 `mwServiceOnLoad()` |
 | `onUnload()` | WA 回调 | 转发到 `mwServiceOnUnload()` |
 | `openSettings()` | WA 回调 | 转发到 `mwServiceOpenSettings()` |
@@ -41,13 +40,14 @@ loadJava("src/SettingsUi.java");
 loadJava("src/Service.java");
 ```
 
-`mwDbWriteHook` 的回调体只做三件事：取出 `param.args`、`param.getResult()`、`param.method.getName()`，
-然后交给 `mwSnsHandleDbWrite(...)`。**不放业务判断**，这样入口脚本始终可读，
-也让 Hook 回调里的每个操作都处在 `try/catch` 保护下。
+**入口脚本里唯一需要格外小心的事**：不要 `import` 或命名 `de.robv.android.xposed.*` 下的任何类型。
+WA 默认开启「Xposed API 调用保护」，插件脚本解析 `XC_MethodHook` / `XposedBridge` 这类名字时会直接
+加载失败（实测报错 `Class: XC_MethodHook not found in namespace`，表现为插件被自动关闭）。
+Hook 一律使用 WA 内置的 `hookAfter` / `unhook`，且回调参数用反射读取 —— 详见 `SnsHook.java`。
 
-> 为什么不把 Hook 实例定义在 `SnsHook.java`：WA 官方分层建议里写明
-> 「入口模块需要共享的 Hook 或任务引用」应放在 `main.java`。另外社区里已验证可用的多文件插件，
-> 匿名内部类都出现在 `main.java`，模块里只放类与函数定义 —— 把 Hook 实例放在入口是最稳的写法。
+> Hook 句柄为什么不放在入口：WA 内置 Hook 接口是「注册即返回句柄」的形式，
+> 注册点与释放点在同一个模块（`SnsHook`）里更内聚，也避免了入口脚本出现匿名类。
+> `main.java` 保持纯粹的回调转发，最不容易出错。
 
 ## src/Util.java — 通用工具
 
@@ -134,15 +134,19 @@ loadJava("src/Service.java");
 | `MW_DB_CLASSES` | `com.tencent.wcdb.database.SQLiteDatabase`、`com.tencent.wcdb.compat.SQLiteDatabase` |
 | `MW_DB_WRITE_METHODS` | `insert` / `insertOrThrow` / `insertWithOnConflict` / `replace` / `replaceOrThrow` / `update` / `updateWithOnConflict` |
 | `mwHookHandles` | 注册返回的句柄列表，`onUnload` 逐个 `unhook()` |
-| `mwHookInstall(Object)` → `int` | 用 `XposedBridge.hookAllMethods` 注册所有重载；返回成功注册的方法数 |
+| `mwHookInstall()` → `int` | 遍历类上全部同名重载，逐个用 WA 内置 `hookAfter` 注册；返回成功注册的方法数 |
+| `mwHookIsWriteMethod(String)` | 方法名是否属于要 Hook 的写入方法集合 |
 | `mwHookUninstall()` | 释放全部句柄并清空列表 |
 
 `mwHookInstall` 返回 0 时不置「已安装」，允许后续重试；`Service` 会在日志与 Toast 上给出明确提示。
+**代码里不出现任何 Xposed 类型名**：回调写成 `hookAfter(method, param -> { mwSnsHandleHookParam(param); })`，
+`param` 不声明类型。
 
 ### 判定侧
 
 | 函数 | 说明 |
 |---|---|
+| `mwSnsHandleHookParam(Object)` | Hook 回调入口：反射取出 `args` / 返回值 / 方法名，转交判定主流程 |
 | `mwSnsHandleDbWrite(Object[], Object, String)` | 判定主流程（见下） |
 | `mwSnsIsTargetTable(Object)` | 表名是否 `SnsInfo`（大小写不敏感） |
 | `mwSnsPickValues(Object[])` | 从参数里找出 `ContentValues` |
@@ -151,24 +155,33 @@ loadJava("src/Service.java");
 | `mwSnsLocalIdFrom(Object, String)` | 从写入返回值取本地行号作为 `localId`；`update` 的返回值是行数，不作数 |
 | `mwSnsExtractText(ContentValues)` | 借用微信 `SnsInfo` 解码正文；失败返回空串 |
 | `mwSnsReadField(Object, String)` | 反射读字段（先 public 后 declared） |
+| `mwSnsCallNoArg(Object, String)` | 反射调无参方法 |
+
+`args` 读不到时会**只提示一次**参数实际类型，便于下次排查 WA 回调结构变化：
+
+```
+[MomentWatch] Hook 回调参数不符合预期，无法读取 args，实际类型: xxx
+```
 
 ### 判定主流程
 
 ```
-mwSnsHandleDbWrite(args, result, methodName)
-  ├─ 总开关关？                        → 放过
-  ├─ args[0] 不是 "SnsInfo"？          → 放过        ← 最先做的廉价过滤
-  ├─ 取不到 ContentValues？            → 放过
-  ├─ userName 为空？                   → 放过
-  ├─ 关注名单为空 / 不包含 userName？  → 放过
-  ├─ snsId 取不到或为 0？              → 放过
-  ├─ createTime > 0 时：
-  │    ├─ 早于 监视起点 - 30s？        → 放过（历史动态）
-  │    └─ 早于 now - 时效窗口？        → 放过（超时效补收）
-  ├─ mwSeenContains(snsId)？           → 放过（并发预检查）
-  ├─ mwSeenMark(snsId) 返回 false？    → 放过（原子去重）
-  ├─ 解析 localId / postType / text
-  └─ mwNotifyNewPost(...)
+mwSnsHandleHookParam(param)
+  └─ 反射取 args / getResult() / method.getName()
+       └─ mwSnsHandleDbWrite(args, result, methodName)
+            ├─ 总开关关？                        → 放过
+            ├─ args[0] 不是 "SnsInfo"？          → 放过        ← 最先做的廉价过滤
+            ├─ 取不到 ContentValues？            → 放过
+            ├─ userName 为空？                   → 放过
+            ├─ 关注名单为空 / 不包含 userName？  → 放过
+            ├─ snsId 取不到或为 0？              → 放过
+            ├─ createTime > 0 时：
+            │    ├─ 早于 监视起点 - 30s？        → 放过（历史动态）
+            │    └─ 早于 now - 时效窗口？        → 放过（超时效补收）
+            ├─ mwSeenContains(snsId)？           → 放过（并发预检查）
+            ├─ mwSeenMark(snsId) 返回 false？    → 放过（原子去重）
+            ├─ 解析 localId / postType / text
+            └─ mwNotifyNewPost(...)
 ```
 
 过滤顺序按「代价从低到高」排列：字符串比较在最前，需要反射解码的正文提取放在最后且只在真正命中时执行。
@@ -214,10 +227,10 @@ mwSnsHandleDbWrite(args, result, methodName)
 [微信进程] SNS 同步线程收到新动态
    └─ SnsInfoStorage 组装 ContentValues(userName=wxid_zhangsan, snsId=-3707261564527312320,
                                         createTime=1791193178, type=1, content=<blob>, ...)
-      └─ WCDB SQLiteDatabase.insert("SnsInfo", null, cv)      ← 被 Hook 拦下
-         └─ main.java: mwDbWriteHook.afterHookedMethod(param)
-            ├─ args / result(=rowid 12876) / methodName="insert"
-            └─ SnsHook: mwSnsHandleDbWrite(args, 12876, "insert")
+      └─ WCDB SQLiteDatabase.insert("SnsInfo", null, cv)      ← 被 WA 内置 Hook 拦下
+         └─ SnsHook: hookAfter 注册的回调(param)
+            ├─ 反射取 args / result(=rowid 12876) / methodName="insert"
+            └─ mwSnsHandleDbWrite(args, 12876, "insert")
                ├─ 表名 "SnsInfo"                    ✓
                ├─ userName = wxid_zhangsan          ✓ 在关注名单
                ├─ snsId = -3707261564527312320      ✓
@@ -244,5 +257,8 @@ mwSnsHandleDbWrite(args, result, methodName)
 - 所有会对宿主产生副作用或依赖版本结构的调用都包在 `try/catch (Throwable)` 里，
   单个环节失败只降级不中断（例如正文解码失败就发一条没有摘要的通知）。
 - 顶部 import 用通配写法（`android.widget.*`），与 WA 插件生态的既有风格一致。
-- 不使用 BeanShell 兼容性存疑的语法：不用 lambda（用匿名内部类）、不用 enhanced-for、
-  不对方法参数加 `final` 之外的新语法糖。
+- **不引用 `de.robv.android.xposed.*` 下的任何类型**：WA 默认开启「Xposed API 调用保护」，
+  命名 `XC_MethodHook` 之类的类型会让整个插件加载失败。需要 Hook 时用 WA 内置的
+  `hookAfter` / `hookBefore` / `hookReplace` / `unhook`，回调参数保持不声明类型、用反射读字段。
+- 不使用 BeanShell 兼容性存疑的语法：不用 enhanced-for、不给方法参数加 `final`；
+  Hook 回调用 Lambda（与 WA 官方 HookDemo 一致），其它需要匿名类的地方一律用匿名内部类。

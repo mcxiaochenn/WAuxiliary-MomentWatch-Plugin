@@ -20,19 +20,50 @@ WCDB 沿用了同样的签名；表名 `SnsInfo` 是数据库 schema 的一部�
 
 ### 1.2 Hook 点
 
+必须使用 WA 的**内置 Hook 接口**，不能用 Xposed 原生 `XposedBridge`（原因见 1.2.1）。
+
 ```java
 ClassLoader cl = hostContext.getClassLoader();
-Class<?> db = Class.forName("com.tencent.wcdb.database.SQLiteDatabase", false, cl);
-XposedBridge.hookAllMethods(db, "insert", mwDbWriteHook);
-// 另需覆盖：insertOrThrow / insertWithOnConflict / replace / replaceOrThrow / update / updateWithOnConflict
-// 以及兼容层 com.tencent.wcdb.compat.SQLiteDatabase
+Class db = Class.forName("com.tencent.wcdb.database.SQLiteDatabase", false, cl);
+Method[] ms = db.getDeclaredMethods();
+for (int i = 0; i < ms.length; i++) {
+    if (!mwHookIsWriteMethod(ms[i].getName())) continue;      // insert / replace / update 等共 7 个方法名
+    mwHookHandles.add(hookAfter(ms[i], param -> {             // param 不声明类型
+        mwSnsHandleHookParam(param);
+    }));
+}
+// 兼容层 com.tencent.wcdb.compat.SQLiteDatabase 同样处理
 ```
 
-- 用 `hookAllMethods` 而不是逐个 `getDeclaredMethod`，是为了顺带覆盖同一方法名的所有重载
-  （`insert` 有 3 个重载），并且不用手写方法签名匹配。
+- **自己遍历 `getDeclaredMethods()` 逐个注册**，而不是找个"批量注册"接口：这样才能覆盖
+  同一方法名的全部重载（`insert` 有 3 个），同时不必手写方法签名匹配。
 - 两个类名都试，任一命中即可；都不命中时 `mwHookInstall` 返回 0，并在日志与 Toast 上明确报出。
 - `Class.forName(name, false, cl)` 用 `initialize=false`：只做 dex 查找，不触发类初始化，
   因此即使朋友圈数据库还没打开，也能在插件加载阶段完成注册。
+
+#### 1.2.1 为什么不能用 XposedBridge（实测踩坑）
+
+WA 默认开启「Xposed API 调用保护」，插件脚本的命名空间里**没有** `de.robv.android.xposed.*`。
+只要脚本里出现 `XC_MethodHook` 这类类型名，整个插件会在加载阶段失败：
+
+```
+Plugin[MomentWatch]: load Failed: Sourced file: eval stream :
+  Typed variable declaration : Class: XC_MethodHook not found in namespace
+	at XC_MethodHook (eval stream:34)
+```
+
+在 WA `1.2.7.r1499` / 微信 `8.0.78` 上实测确认，且社区插件「僵尸粉检测」在同版本上同样报
+`Unknown class: XC_MethodHook`。WA 官方示例 `plugins/v127/Hd/HookDemo` 也把内置 Hook 与原生 Hook
+分成两条路，并注明原生方式"需关闭 Xposed API 调用保护"。
+
+因此本项目的写法是：
+
+1. 注册只用 `hookAfter` / `unhook`；
+2. 回调里 `param` **不声明类型**，`args` / `method` / 返回值全部用反射读取，
+   代码里不出现任何 Xposed 类型名。
+
+反射读取有一个额外好处：回调参数的结构如果跟预期不同，插件会打印一次实际类型（见
+[02-code-structure.md](02-code-structure.md) 的判定侧），下次适配时能直接定位。
 
 ### 1.3 参数解析
 

@@ -22,7 +22,7 @@ WA 按 BeanShell 规则执行 `.java` 脚本。这一步用真实的 BeanShell �
 ### 2. 核心逻辑校验
 
 在本地以桩类替换 Android / WA 接口，把模块按 `loadJava` 顺序拼装后真实执行，
-覆盖 52 项断言：
+覆盖 67 项断言：
 
 | 分组 | 断言数 | 覆盖内容 |
 |---|---|---|
@@ -31,7 +31,7 @@ WA 按 BeanShell 规则执行 `.java` 脚本。这一步用真实的 BeanShell �
 | 命中判定 | 10 | 非目标表不触发、未关注的人不触发、命中并携带 localId、同一 snsId 去重、早于监视起点不触发、超出时效不触发、时效不限时可触发、`update` 无行号时降级、总开关关闭不触发 |
 | 参数解析 | 9 | `type` → 类型映射、`insert`/`insertWithOnConflict` 返回行号作 localId、`update` 返回值不作 localId、表名大小写不敏感 |
 | 跳转组装 | 9 | 精确跳转的组件与三个 extra、Intent 数组首元素、两级降级路径、组件包名 |
-| Hook 生命周期 | 3 | 目标类缺失时返回 0、注册失败不置已安装、卸载后句柄清空 |
+| Hook 注册与回调 | 18 | 枚举并注册全部 8 个写入重载、覆盖 insert/replace/update、不注册 delete、重复安装幂等；用伪回调参数端到端驱动一次「新动态落库」、`insert` 取返回值作 localId、`update` 不使用行数、非目标表不触发；`unhook` 逐个释放、卸载清空句柄、目标类缺失时安全返回 0 |
 | 去重账本 | 7 | 上限淘汰、顺序表长度一致、最旧淘汰、最近保留、重复登记语义、清空 |
 | 集合互转 | 2 | 名单集合与字符串往返一致、空集合序列化 |
 
@@ -42,20 +42,26 @@ tools/verify/
 ├── run.sh           编排入口
 ├── assemble.py      把模块与用例拼装成单个可执行脚本（复现 loadJava 的共享命名空间）
 ├── BshCheck.java    基于 bsh.Parser 的解析校验工具
-├── stubs/           Android / WA / Xposed 桩类，仅用于本地执行
+├── stubs/           仅用于本地执行的桩类
 │   ├── android/     ContentValues / Intent / ComponentName / Context / Handler / Toast ...
-│   ├── de/robv/     XC_MethodHook / XposedBridge
-│   └── me/hd/       FriendInfo
+│   ├── com/tencent/wcdb/database/  SQLiteDatabase（8 个写入重载 + delete，用于验证 Hook 枚举）
+│   ├── me/hd/       FriendInfo
+│   └── mwtest/      FakeHookParam（等价于 XC_MethodHook.MethodHookParam，插件用反射读它）
 └── cases/
     ├── support.bsh  WA 全局接口与宿主环境桩（config 存储、好友列表、通知拦截等）
-    └── core.bsh     52 项断言
+    └── core.bsh     67 项断言
 ```
 
 ## 覆盖边界
 
-- **覆盖**：不依赖真实 Android UI 的全部纯逻辑，即命中判定、去重、时效、参数解析、跳转组装、Hook 注册流程。
+- **覆盖**：不依赖真实 Android UI 的全部纯逻辑，即命中判定、去重、时效、参数解析、跳转组装，
+  以及 Hook 的注册、回调解析与释放链路（用桩类与伪回调参数端到端驱动）。
 - **不覆盖**：真实通知的展示与点击、好友多选界面交互、微信数据库 Hook 是否真的拦到写入、以及跳转是否真的落到指定那条朋友圈。
   这几项依赖宿主行为，只能在真机验证，见 [docs/06-test-plan.md](../../docs/06-test-plan.md)。
 
 `stubs/` 只是为了让脚本能在 JVM 上跑起来，**不参与插件运行**，插件在 WA 里使用的始终是真实的
-Android / Xposed / WA 接口。
+Android / WA 接口。
+
+注意：插件本身**不引用**任何 Xposed 类型（WA 的「Xposed API 调用保护」会拦下来），
+所以桩类里也不需要 `de.robv.android.xposed.*`；Hook 的注册与释放由 `cases/support.bsh` 里的
+`hookAfter` / `unhook` 桩模拟。

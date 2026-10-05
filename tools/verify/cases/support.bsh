@@ -19,3 +19,19 @@ List getFriendList() { List l = new ArrayList(); return l; }
 // 拦截通知，只记录调用
 ArrayList notified = new ArrayList();
 void mwNotifyNewPost(String u, long s, int l, String t, int pt) { notified.add(u + "|" + s + "|" + l + "|" + pt); }
+
+// —— WA 内置 Hook 接口桩（对应 WA 的 hookAfter / unhook）——
+ArrayList mwTestHookedMembers = new ArrayList();
+ArrayList mwTestHookCallbacks = new ArrayList();
+int mwTestUnhookCount = 0;
+
+Object hookAfter(java.lang.reflect.Member member, java.util.function.Consumer callback) {
+    mwTestHookedMembers.add(member);
+    mwTestHookCallbacks.add(callback);
+    return new Object();
+}
+
+void unhook(Object handle) {
+    mwTestUnhookCount = mwTestUnhookCount + 1;
+}
+

@@ -56,9 +56,14 @@ flowchart LR
 | 微信版本 | 跟随 WAuxiliary 的适配区间（官方声明 `8.0.44 ~ 8.0.65`，国内版与 Google Play 版） |
 | 系统 | Android 8.0+（通知渠道需要 API 26+；`PendingIntent.FLAG_IMMUTABLE` 需要 API 23+） |
 | 运行环境 | LSPosed / LSPatch 等 Xposed 框架，作用域为 `com.tencent.mm` |
+| 已实测 | WAuxiliary `1.2.7.r1499` + 微信 `cn.8.0.78.3180` + LSPosed `2.2.0-it` |
 
 > WAuxiliary 通过 DexKit 兼容混淆版本，但**朋友圈详情页的类名与 Intent 键名是硬编码的字符串**。
 > 涉及跳转的部分属于版本敏感项，已在 [docs/06-test-plan.md](docs/06-test-plan.md) 里列为必测项。
+
+> 本插件全程只使用 WA 公开接口，**不引用 `de.robv.android.xposed.*` 下的任何类型** ——
+> WA 默认开启「Xposed API 调用保护」，脚本里命名 `XC_MethodHook` 这类类型会导致插件加载失败。
+> Hook 走 WA 内置的 `hookAfter` / `unhook`，回调参数用反射读取。
 
 ## 安装
 
@@ -116,7 +121,7 @@ git clone https://github.com/mcxiaochenn/WAuxiliary-MomentWatch-Plugin.git
 ```
 plugins/v127/mcxiaochen/MomentWatch/
 ├── info.prop          插件元信息（name / author / version / updateTime）
-├── main.java          入口：模块加载顺序、WA 回调转发、跨模块共享的 Hook 引用
+├── main.java          入口：模块加载顺序、WA 回调转发
 ├── readme.md          插件说明（宿主内展示）
 └── src/
     ├── Util.java      通用工具：文本清洗、集合解析、时间格式化、主线程提示
@@ -151,7 +156,7 @@ plugins/v127/mcxiaochen/MomentWatch/
 bash tools/verify/run.sh
 ```
 
-它会用真实的 BeanShell 解析器逐文件做语法校验，再用桩类在 JVM 上执行核心逻辑的 52 项断言
+它会用真实的 BeanShell 解析器逐文件做语法校验，再用桩类在 JVM 上执行核心逻辑的 67 项断言
 （命中判定、去重、时效、参数解析、跳转组装、Hook 生命周期）。
 覆盖边界说明见 [tools/verify/README.md](tools/verify/README.md)。
 
