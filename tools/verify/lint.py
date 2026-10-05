@@ -11,6 +11,11 @@
   2. 分隔线必须用 mwUiAddDivider 添加，不能 addView(mwUiDivider(...))。
      裸 View 不覆写 onMeasure，在 AT_MOST 约束下 WRAP_CONTENT 会被解析成"整个可用高度"，
      第一条分隔线就会吃掉卡片全部剩余高度，把它后面的所有控件挤成 0 高度（表现为整块空白）。
+  3. 好友行不要用平台 CheckBox（勾选指示器自绘，见 mwUiFriendRow）。
+     CheckBox 的勾选图形来自宿主主题的 checkboxStyle，平台 CompoundButton 按该 drawable
+     的固有尺寸绘制、还把视图 minHeight 设成它的固有高度，布局参数管不住。
+     实测 Android 17 + 微信 cn.8.0.78 主题的勾选 drawable 勾选态固有尺寸异常，
+     勾上后整个图标被拉伸。
 
 注释与字符串里的出现不算违规（本项目在注释里解释这些坑）。
 """
@@ -74,6 +79,11 @@ RULES = [
         re.compile(r"addView\s*\(\s*mwUiDivider\s*\([^()]*\)\s*\)"),
         "用 addView 直接添加分隔线：裸 View 在 AT_MOST 约束下会撑满剩余高度，"
         "必须改用 mwUiAddDivider(ctx, parent)",
+    ),
+    (
+        re.compile(r"\bnew\s+CheckBox\s*\("),
+        "使用平台 CheckBox：勾选图形来自宿主主题的 checkboxStyle，按 drawable 固有尺寸绘制，"
+        "布局参数管不住（实测微信主题下勾选后被拉伸）。请改用 mwUiFriendRow 自绘指示器",
     ),
 ]
 

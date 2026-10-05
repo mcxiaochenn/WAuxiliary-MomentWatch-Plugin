@@ -200,7 +200,7 @@ mwSnsHandleHookParam(param)
 | 视图基元 | `mwUiDp` / `mwUiRound` / `mwUiTitle` / `mwUiHint` / `mwUiDivider` / `mwUiAddDivider` / `mwUiRow` / `mwUiButton` / `mwUiMakeCard` |
 | 弹窗外壳 | `mwUiNewDialog` / `mwUiAttachCard` / `mwUiShowDialog` / `mwUiHideSoftInput` |
 | 设置主页 | `mwUiShowSettings` / `mwUiWatchSummary` / `mwUiStateSummary` |
-| 好友多选 | `mwUiPickFriends` / `mwUiBuildFriendPicker` / `mwUiFillFriendList` |
+| 好友多选 | `mwUiPickFriends` / `mwUiBuildFriendPicker` / `mwUiFillFriendList` / `mwUiFriendRow` / `mwUiApplyMark` / `mwUiToggleFriendRow` |
 
 设计要点：
 
@@ -208,8 +208,17 @@ mwSnsHandleHookParam(param)
   好友数量通常上百，同步读取会卡住设置界面。
 - **筛选与全选**：`mwUiFilteredIds` 保存当前筛选条件下可见的 `wxid`，「全选 / 反选」只作用于这批人，
   避免用户以为筛选后全选只选当前页、结果却选了全部好友。
+- **好友行不用平台 `CheckBox`，勾选指示器自绘**（`mwUiFriendRow` + `mwUiApplyMark`）：
+  CheckBox 的勾选图形来自宿主主题的 `checkboxStyle`（`android:button` drawable），而平台
+  `CompoundButton` 会把该 drawable 按**固有尺寸**绘制（`onDraw` 里 `setBounds` 的宽高直接取
+  `getIntrinsicWidth/Height`），还会把视图 `minHeight` 设成它的固有高度 —— 勾选图画多大完全由
+  宿主主题决定，布局参数管不住。实测 Android 17 + 微信 `cn.8.0.78` 主题的勾选 drawable
+  勾选态固有尺寸异常，勾上后整个图标被拉伸成一大块。自绘指示器是固定 20dp 的圆角方块
+  （选中：主题蓝 + 白色 ✓；未选中：浅灰 + 描边），彻底摆脱对宿主主题 drawable 的依赖。
+  切换选中走 `mwUiToggleFriendRow` 就地更新，不重建列表，滚动位置不跳。
+  该约束已写进 `tools/verify/lint.py`（禁止 `new CheckBox(`）。
 - **渲染上限** `MW_UI_MAX_ROWS = 300`：超出时只渲染前 300 行并提示用筛选缩小范围，
-  避免上千个 `CheckBox` 拖慢界面。
+  避免上千个列表行拖慢界面。
 - **分隔线必须用 `mwUiAddDivider`**：`mwUiDivider` 返回的是裸 `View`，裸 View 不覆写 `onMeasure`，
   在 `AT_MOST` 约束下 `WRAP_CONTENT` 会被 `View.getDefaultSize()` 解析成"整个可用高度"。
   卡片本身是 `WRAP_CONTENT`，于是第一条分隔线会吃掉全部剩余高度，把它后面所有行挤成 0 高度 ——

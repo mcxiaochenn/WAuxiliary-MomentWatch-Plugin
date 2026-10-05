@@ -60,6 +60,17 @@
 （截图有 1 个色阶的色彩空间转换偏差），横向范围正好是卡片的左右内边距、纵向从说明文字下方一直到卡片底部
 —— 与"第一条分隔线撑满剩余高度"完全吻合。
 
+#### 第三轮（真机：勾选图标被拉伸）
+
+| 现象 | 根因 | 修复 |
+|---|---|---|
+| 关注名单多选界面里，勾选一个好友后整个勾选图标被拉伸成一大块 | 好友行用的是平台 `CheckBox`，其勾选图形来自**宿主主题的 `checkboxStyle`**（`android:button` drawable），而平台 `CompoundButton` 把该 drawable 按**固有尺寸**绘制（`onDraw` 里 `setBounds` 的宽高取 `getIntrinsicWidth/Height`，见 AOSP `CompoundButton.java`），并且 `setButtonDrawable` 会把视图 `minHeight` 设成它的固有高度 —— 勾选图画多大完全由宿主主题决定，布局参数管不住。实测 Android 17 + 微信 `cn.8.0.78` 主题的勾选 drawable 勾选态固有尺寸异常 | 好友行改自绘（`mwUiFriendRow` + `mwUiApplyMark`）：固定 20dp 圆角方块指示器 + 名字 `TextView`，整行可点，切换走 `mwUiToggleFriendRow` 就地更新；`tools/verify/lint.py` 增加禁止 `new CheckBox(` 的门禁 |
+
+这一轮的教训与本项目「界面全部用代码构建、不依赖宿主资源」的原则直接相关：`CheckBox` 恰好是
+唯一还在依赖宿主主题外观的控件 —— 它的**视觉**来自主题 drawable 资源，无法用布局参数约束。
+设置主页的 `Switch` 同样使用宿主主题外观，但实测渲染正常（`switchStyle` 与 `checkboxStyle`
+是两个独立的 style），保留并列为观察项。
+
 #### 第一轮（真机：加载即被关闭）
 
 | 现象 | 根因 | 修复 |
