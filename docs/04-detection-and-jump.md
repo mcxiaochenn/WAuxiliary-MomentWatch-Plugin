@@ -62,8 +62,37 @@ Plugin[MomentWatch]: load Failed: Sourced file: eval stream :
 2. 回调里 `param` **不声明类型**，`args` / `method` / 返回值全部用反射读取，
    代码里不出现任何 Xposed 类型名。
 
-反射读取有一个额外好处：回调参数的结构如果跟预期不同，插件会打印一次实际类型（见
-[02-code-structure.md](02-code-structure.md) 的判定侧），下次适配时能直接定位。
+反射读取有一个额外好处：回调参数的结构如果跟预期不同，插件会打印一次实际类型
+（见 [02-code-structure.md](02-code-structure.md) 的判定侧），下次适配时能直接定位。
+
+#### 1.2.2 回调参数的结构不能假设（实测第二坑）
+
+WA `1.2.7.r1499` 的 APK 里**没有任何 `de.robv.android.xposed` 类**：它跑在 libxposed API
+（`io.github.libxposed.api.XposedInterface$Hooker/HookHandle/Chain`）加 YukiHookAPI 之上。
+所以 WA 文档里写的回调参数 `XC_MethodHook.MethodHookParam` 并不是运行时的真实类型，
+按「公开字段 `args`」去读会读不到 —— 这正是第二轮真机上 `Hook 回调参数读不到 args` 的原因。
+
+现在的做法是分层解析（详见 [03-interfaces.md](03-interfaces.md) 1.6），并且**读不到时把真实结构
+打进日志**（类型名、字段表、方法表），所以即便还有第三种形态，下一轮日志也能直接定位。
+
+#### 1.2.3 回调里不能给脚本级变量赋值（实测第三坑）
+
+被 BeanShell lambda 捕获的脚本变量是 final。Hook 回调的调用链上对它赋值会抛：
+
+```
+Can't invoke lambda: Variable assignment: mwHookParamWarned: Cannot re-assign final variable mwHookParamWarned.
+	at mwHookParamWarned = true (SnsHook.java:146)
+	at param -> { (SnsHook.java:83)
+```
+
+注意两个细节：
+
+1. 异常在 **lambda 调用边界**抛出，回调内部的 `try/catch` 拦不住，直接冒到微信的数据库调用上，
+   被 WA 打印成 `Try to hook <方法> got an exception`；
+2. 这个报错会**掩盖真正的问题** —— 本轮它掩盖了"`args` 读不到"。
+
+所以：标志位、缓存这类需要在回调间保持的可变状态，一律用**长度 1 的数组**承载
+（`boolean[1]` / `Object[1]`），数组元素赋值不算变量重新赋值，不受该限制。
 
 ### 1.3 参数解析
 

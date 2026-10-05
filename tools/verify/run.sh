@@ -70,10 +70,14 @@ FILES=(
 )
 
 echo
-echo "==> [1/2] BeanShell 解析校验"
+echo "==> [1/3] BeanShell 解析校验"
 LINT_FILES=()
 for f in "${FILES[@]}"; do LINT_FILES+=("$(winpath "$f")"); done
 java -Dfile.encoding=UTF-8 -cp "$(winpath "$BSH_JAR")$CP_SEP$(winpath "$LINT_OUT")" BshCheck "${LINT_FILES[@]}"
+
+echo
+echo "==> [2/3] 源码约束检查"
+python "$(winpath "$HERE/lint.py")" "$(winpath "$PLUGIN")"
 
 echo
 echo "==> 编译测试桩"
@@ -84,5 +88,5 @@ echo "==> 拼装测试脚本"
 python "$(winpath "$HERE/assemble.py")" "$(winpath "$PLUGIN")" "$(winpath "$HERE")"
 
 echo
-echo "==> [2/2] 核心逻辑校验"
+echo "==> [3/3] 核心逻辑校验"
 java -Dfile.encoding=UTF-8 -cp "$(winpath "$BSH_JAR")$CP_SEP$(winpath "$STUB_OUT")" bsh.Interpreter "$(winpath "$HERE/combined.bsh")"

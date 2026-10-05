@@ -101,11 +101,29 @@ onBeforeHook = hookBefore(method, param -> { log("onResume Before") });
 onAfterHook = XposedBridge.hookMethod(method, new XC_MethodHook() { ... });
 ```
 
-因此本插件的 Hook 侧遵守两条约束：
+因此本插件的 Hook 侧遵守三条约束：
 
 1. 只用 `hookAfter` / `unhook`；
 2. 回调里**不声明 `param` 的类型**，一律用反射读 `args` / `method` / `getResult()`，
-   代码里不出现任何 Xposed 类型名。
+   代码里不出现任何 Xposed 类型名；
+3. 回调调用链上**不得给脚本级变量赋值** —— 被 lambda 捕获的脚本变量是 final，
+   赋值会抛 `Cannot re-assign final variable`，且异常在 lambda 调用边界抛出，
+   回调内部的 `try/catch` 拦不住（实测表现为每次数据库写入都报一次错、功能全失效）。
+   需要在回调间保持的可变状态一律用长度 1 的数组承载。
+
+**回调参数的结构是版本敏感项，不要假设成 `XC_MethodHook.MethodHookParam`。**
+实测 WA `1.2.7.r1499` 的 APK 里**完全没有** `de.robv.android.xposed`（它基于 libxposed API
++ YukiHookAPI），按"公开字段 `args`"读入参会失败。因此 `mwSnsReadParamArgs` 采用分层解析：
+
+| 顺序 | 尝试 |
+|---|---|
+| 1 | `param` 本身就是入参数组 |
+| 2 | 字段 `args`（含继承链，`setAccessible`） |
+| 3 | `getArgs()` / `getArguments()` / 字段 `arguments` |
+| 4 | 一次性探测：扫无参访问器，取返回「首元素为字符串的数组/列表」的那个，并缓存 |
+
+探测判据很稳：数据库写入方法的 `args[0]` 必然是表名字符串。探测结果缓存在长度 1 的数组里，
+只做一次，不会给每次写入增加负担。读不到时会把真实类型、字段表、方法表打进日志，便于下次适配。
 
 要覆盖同一方法名的全部重载（`insert` 有多个重载），本项目自行遍历 `getDeclaredMethods()`
 逐个注册，而不是依赖 `hookAllMethods`。
@@ -262,7 +280,7 @@ void mwNotifyTest()
 ```java
 int  mwHookInstall()      // 返回成功注册的方法数；0 表示当前版本不兼容
 void mwHookUninstall()
-void mwSnsHandleHookParam(Object param)
+void mwSnsHandleHookParam(Object param)   // 解析回调参数后转交判定主流程
 void mwSnsHandleDbWrite(Object[] args, Object result, String methodName)
 ```
 

@@ -160,6 +160,20 @@ checkEq("update 回调不使用行数作 localId", notified.get(1), "wxid_a|1000
 cbIns.accept(new mwtest.FakeHookParam(wargs("SnsComment", cv("wxid_a", 1001L, NOW, 1)), (java.lang.reflect.Member) mwTestHookedMembers.get(iIns), Long.valueOf(11)));
 checkEq("回调内非 SnsInfo 表不触发", Integer.valueOf(notified.size()), Integer.valueOf(2));
 
+// 回调参数形态变化：只有 getter（无字段）的封装也要能解析
+notified.clear();
+cbIns.accept(new mwtest.GetterHookParam(wargs("SnsInfo", cv("wxid_a", 1002L, NOW, 1)), (java.lang.reflect.Member) mwTestHookedMembers.get(iIns), Long.valueOf(777)));
+checkEq("getter 形态回参也能解析并提醒", Integer.valueOf(notified.size()), Integer.valueOf(1));
+checkEq("getter 形态回参的 localId 正确", notified.get(0), "wxid_a|1002|777|1");
+
+// 回归：参数结构完全不符预期时，必须只记一次日志且不抛异常。
+// 这里刻意经由回调（BeanShell lambda）触发——给被 lambda 捕获的脚本变量重新赋值会抛
+// "Cannot re-assign final variable"，因此标志位必须用可变容器承载。
+notified.clear();
+cbIns.accept(new Object());
+check("非法回调参数不抛异常且被忽略", notified.isEmpty());
+check("非法回调参数置一次告警标志", mwHookParamWarned[0]);
+
 mwHookUninstall();
 checkEq("卸载逐个调用 unhook", Integer.valueOf(mwTestUnhookCount), Integer.valueOf(8));
 check("卸载后句柄清空", mwHookHandles.isEmpty());

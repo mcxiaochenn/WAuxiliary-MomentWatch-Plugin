@@ -156,7 +156,7 @@ plugins/v127/mcxiaochen/MomentWatch/
 bash tools/verify/run.sh
 ```
 
-它会用真实的 BeanShell 解析器逐文件做语法校验，再用桩类在 JVM 上执行核心逻辑的 67 项断言
+它会用真实的 BeanShell 解析器逐文件做语法校验，再用桩类在 JVM 上执行核心逻辑的 71 项断言
 （命中判定、去重、时效、参数解析、跳转组装、Hook 生命周期）。
 覆盖边界说明见 [tools/verify/README.md](tools/verify/README.md)。
 

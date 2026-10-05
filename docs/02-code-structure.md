@@ -146,7 +146,11 @@ Hook 一律使用 WA 内置的 `hookAfter` / `unhook`，且回调参数用反射
 
 | 函数 | 说明 |
 |---|---|
-| `mwSnsHandleHookParam(Object)` | Hook 回调入口：反射取出 `args` / 返回值 / 方法名，转交判定主流程 |
+| `mwSnsHandleHookParam(Object)` | Hook 回调入口：解析出 `args` / 返回值 / 方法名，转交判定主流程 |
+| `mwSnsReadParamArgs(Object)` | 分层解析回调入参：`param` 本身是数组 → 字段 `args` → `getArgs()` → `getArguments()` → `arguments` → 一次性探测并缓存访问器 |
+| `mwSnsProbeArgsAccessor(Object)` | 探测访问器：扫无参方法，取返回「首元素为字符串的数组/列表」的那个（DB 写入的 `args[0]` 必为表名） |
+| `mwSnsReadParamMember` / `mwSnsReadParamResult` | 取被 Hook 的成员 / 返回值，同样字段与 getter 都试 |
+| `mwSnsListFields` / `mwSnsListMethods` | 诊断用：读不到入参时把真实类型、字段表、方法表打进日志 |
 | `mwSnsHandleDbWrite(Object[], Object, String)` | 判定主流程（见下） |
 | `mwSnsIsTargetTable(Object)` | 表名是否 `SnsInfo`（大小写不敏感） |
 | `mwSnsPickValues(Object[])` | 从参数里找出 `ContentValues` |
@@ -193,7 +197,7 @@ mwSnsHandleHookParam(param)
 
 | 分组 | 函数 |
 |---|---|
-| 视图基元 | `mwUiDp` / `mwUiRound` / `mwUiTitle` / `mwUiHint` / `mwUiDivider` / `mwUiRow` / `mwUiButton` / `mwUiMakeCard` |
+| 视图基元 | `mwUiDp` / `mwUiRound` / `mwUiTitle` / `mwUiHint` / `mwUiDivider` / `mwUiAddDivider` / `mwUiRow` / `mwUiButton` / `mwUiMakeCard` |
 | 弹窗外壳 | `mwUiNewDialog` / `mwUiAttachCard` / `mwUiShowDialog` / `mwUiHideSoftInput` |
 | 设置主页 | `mwUiShowSettings` / `mwUiWatchSummary` / `mwUiStateSummary` |
 | 好友多选 | `mwUiPickFriends` / `mwUiBuildFriendPicker` / `mwUiFillFriendList` |
@@ -206,6 +210,11 @@ mwSnsHandleHookParam(param)
   避免用户以为筛选后全选只选当前页、结果却选了全部好友。
 - **渲染上限** `MW_UI_MAX_ROWS = 300`：超出时只渲染前 300 行并提示用筛选缩小范围，
   避免上千个 `CheckBox` 拖慢界面。
+- **分隔线必须用 `mwUiAddDivider`**：`mwUiDivider` 返回的是裸 `View`，裸 View 不覆写 `onMeasure`，
+  在 `AT_MOST` 约束下 `WRAP_CONTENT` 会被 `View.getDefaultSize()` 解析成"整个可用高度"。
+  卡片本身是 `WRAP_CONTENT`，于是第一条分隔线会吃掉全部剩余高度，把它后面所有行挤成 0 高度 ——
+  真机表现就是"设置页只有标题和说明，下面一整块浅灰、点不动"。`mwUiAddDivider` 显式给 1dp 高度。
+  该约束已写进 `tools/verify/lint.py`。
 - **写配置统一走 `Config`**：界面只收集 `selected` 集合，保存时调用 `mwConfigSetWatchList`。
 
 ## src/Service.java — 生命周期
@@ -260,5 +269,10 @@ mwSnsHandleHookParam(param)
 - **不引用 `de.robv.android.xposed.*` 下的任何类型**：WA 默认开启「Xposed API 调用保护」，
   命名 `XC_MethodHook` 之类的类型会让整个插件加载失败。需要 Hook 时用 WA 内置的
   `hookAfter` / `hookBefore` / `hookReplace` / `unhook`，回调参数保持不声明类型、用反射读字段。
+- **Hook 回调的调用链上不得给脚本级变量赋值**：被 lambda 捕获的脚本变量在 BeanShell 里是 final，
+  赋值会抛 `Cannot re-assign final variable`，而且异常在 lambda 调用边界抛出、回调内部的 `try/catch`
+  拦不住，表现为每次数据库写入都报一次错。需要在回调间保持的可变状态一律用**长度 1 的数组**承载
+  （数组元素赋值不受限制），例如 `mwHookParamWarned` / `mwHookArgsAccessor`。
+- **不给裸 `View` 当布局占位**：同 `mwUiAddDivider` 的说明，这类控件在 `AT_MOST` 下会撑满剩余空间。
 - 不使用 BeanShell 兼容性存疑的语法：不用 enhanced-for、不给方法参数加 `final`；
   Hook 回调用 Lambda（与 WA 官方 HookDemo 一致），其它需要匿名类的地方一律用匿名内部类。

@@ -4,6 +4,7 @@
 # 详见 README「交付状态」。
 # ============================================================
 /plugins/v127/mcxiaochen/MomentWatch/
+/plugins/v127/mcxiaochen/MomentWatch.zip
 
 # 验证工具链的构建产物
 tools/verify/out/
