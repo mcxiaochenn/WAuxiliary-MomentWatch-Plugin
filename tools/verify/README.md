@@ -1,0 +1,61 @@
+# 验证工具链
+
+不依赖真机的静态与逻辑验证，用来在改动插件后快速回归。
+
+## 运行
+
+```bash
+bash tools/verify/run.sh
+```
+
+前置条件：JDK（`javac` + `java`，8 及以上）、Python 3。首次运行会从 BeanShell 官方 Releases 下载
+`bsh-3.0.0b1.jar`（也可用 `BSH_JAR=/path/to/bsh.jar` 指定本地文件）。
+
+## 两步验证
+
+### 1. BeanShell 解析校验
+
+WA 按 BeanShell 规则执行 `.java` 脚本。这一步用真实的 BeanShell 解析器（`bsh-3.0.0b1`，
+与社区在用插件的解析行为一致）逐个解析插件的 8 个脚本，确认语法在 WA 运行时下成立。
+任何 `FAIL` 都表示该文件在真机上会加载失败。
+
+### 2. 核心逻辑校验
+
+在本地以桩类替换 Android / WA 接口，把模块按 `loadJava` 顺序拼装后真实执行，
+覆盖 52 项断言：
+
+| 分组 | 断言数 | 覆盖内容 |
+|---|---|---|
+| 工具函数 | 6 | 名单分隔符解析、正文清洗、截断、时长格式化、空值判定、`trim` 容错 |
+| 配置读写 | 6 | 默认值、写入后内存同步、从 `config.prop` 重读、时效循环切换 |
+| 命中判定 | 10 | 非目标表不触发、未关注的人不触发、命中并携带 localId、同一 snsId 去重、早于监视起点不触发、超出时效不触发、时效不限时可触发、`update` 无行号时降级、总开关关闭不触发 |
+| 参数解析 | 9 | `type` → 类型映射、`insert`/`insertWithOnConflict` 返回行号作 localId、`update` 返回值不作 localId、表名大小写不敏感 |
+| 跳转组装 | 9 | 精确跳转的组件与三个 extra、Intent 数组首元素、两级降级路径、组件包名 |
+| Hook 生命周期 | 3 | 目标类缺失时返回 0、注册失败不置已安装、卸载后句柄清空 |
+| 去重账本 | 7 | 上限淘汰、顺序表长度一致、最旧淘汰、最近保留、重复登记语义、清空 |
+| 集合互转 | 2 | 名单集合与字符串往返一致、空集合序列化 |
+
+## 目录说明
+
+```
+tools/verify/
+├── run.sh           编排入口
+├── assemble.py      把模块与用例拼装成单个可执行脚本（复现 loadJava 的共享命名空间）
+├── BshCheck.java    基于 bsh.Parser 的解析校验工具
+├── stubs/           Android / WA / Xposed 桩类，仅用于本地执行
+│   ├── android/     ContentValues / Intent / ComponentName / Context / Handler / Toast ...
+│   ├── de/robv/     XC_MethodHook / XposedBridge
+│   └── me/hd/       FriendInfo
+└── cases/
+    ├── support.bsh  WA 全局接口与宿主环境桩（config 存储、好友列表、通知拦截等）
+    └── core.bsh     52 项断言
+```
+
+## 覆盖边界
+
+- **覆盖**：不依赖真实 Android UI 的全部纯逻辑，即命中判定、去重、时效、参数解析、跳转组装、Hook 注册流程。
+- **不覆盖**：真实通知的展示与点击、好友多选界面交互、微信数据库 Hook 是否真的拦到写入、以及跳转是否真的落到指定那条朋友圈。
+  这几项依赖宿主行为，只能在真机验证，见 [docs/06-test-plan.md](../../docs/06-test-plan.md)。
+
+`stubs/` 只是为了让脚本能在 JVM 上跑起来，**不参与插件运行**，插件在 WA 里使用的始终是真实的
+Android / Xposed / WA 接口。

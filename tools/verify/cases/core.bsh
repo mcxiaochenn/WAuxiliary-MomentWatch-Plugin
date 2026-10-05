@@ -1,0 +1,145 @@
+
+// ================= 测试用例 =================
+int mwTestPass = 0;
+int mwTestFail = 0;
+void check(String name, boolean ok) {
+    if (ok) { mwTestPass++; System.out.println("  PASS  " + name); }
+    else { mwTestFail++; System.out.println("  FAIL  " + name); }
+}
+void checkEq(String name, Object actual, Object expected) {
+    boolean ok = (actual == null) ? (expected == null) : actual.equals(expected);
+    if (!ok) System.out.println("        actual=" + actual + " expected=" + expected);
+    check(name, ok);
+}
+
+ContentValues cv(String user, long snsId, long createSec, int type) {
+    ContentValues c = new ContentValues();
+    if (user != null) c.put("userName", user);
+    c.put("snsId", Long.valueOf(snsId));
+    c.put("createTime", Long.valueOf(createSec));
+    c.put("type", Integer.valueOf(type));
+    return c;
+}
+Object[] wargs(String table, ContentValues c) { Object[] a = new Object[3]; a[0] = table; a[1] = null; a[2] = c; return a; }
+
+long NOW = System.currentTimeMillis() / 1000L;
+
+System.out.println("\n[1] 工具函数");
+checkEq("解析名单支持中英文分隔符", mwUtilParseSet("a,b，c；d\ne f").size(), Integer.valueOf(5));
+checkEq("清洗 HTML 与实体", mwUtilCleanText("<div>你好</div>&amp;世界"), "你好 &世界");
+checkEq("截断保留前缀", mwUtilCut("0123456789", 4), "0123…");
+checkEq("时长格式化", mwUtilFormatDuration(86400L), "1 天");
+checkEq("空值判定", Boolean.valueOf(mwUtilIsEmpty("   ")), Boolean.valueOf(true));
+checkEq("trim 容错 null", mwUtilTrim(null), "");
+
+System.out.println("\n[2] 配置读写与持久化");
+cfgStore.clear();
+mwConfigLoad();
+check("默认启用提醒", mwEnabled);
+check("默认关注名单为空", mwWatchSet.isEmpty());
+checkEq("默认时效 24 小时", Long.valueOf(mwMaxAgeSec), Long.valueOf(86400L));
+mwConfigSetWatchList("wxid_a,wxid_b");
+checkEq("写入后内存同步", Integer.valueOf(mwWatchSet.size()), Integer.valueOf(2));
+mwConfigLoad();
+check("名单可从 config.prop 重读", mwWatchSet.contains("wxid_a") && mwWatchSet.contains("wxid_b"));
+mwConfigCycleMaxAge();
+checkEq("时效可循环切换", Long.valueOf(mwMaxAgeSec), Long.valueOf(259200L));
+mwConfigSetMaxAge(86400L);
+
+System.out.println("\n[3] 命中判定 / 去重 / 时效");
+cfgStore.clear(); mwConfigLoad(); mwConfigSetWatchList("wxid_a");
+mwMonitorStartSec = NOW; mwMaxAgeSec = 86400L; notified.clear();
+
+mwSnsHandleDbWrite(wargs("OtherTable", cv("wxid_a", 111L, NOW, 1)), Long.valueOf(1), "insert");
+checkEq("非 SnsInfo 表不触发", Integer.valueOf(notified.size()), Integer.valueOf(0));
+
+mwSnsHandleDbWrite(wargs("SnsInfo", cv("wxid_c", 222L, NOW, 1)), Long.valueOf(1), "insert");
+checkEq("未关注的人不触发", Integer.valueOf(notified.size()), Integer.valueOf(0));
+
+mwSnsHandleDbWrite(wargs("SnsInfo", cv("wxid_a", 333L, NOW, 1)), Long.valueOf(7), "insert");
+checkEq("关注命中并带上 localId", Integer.valueOf(notified.size()), Integer.valueOf(1));
+checkEq("通知载荷正确", notified.get(0), "wxid_a|333|7|1");
+
+mwSnsHandleDbWrite(wargs("SnsInfo", cv("wxid_a", 333L, NOW, 1)), Long.valueOf(7), "insert");
+checkEq("同一 snsId 二次写入被去重", Integer.valueOf(notified.size()), Integer.valueOf(1));
+
+mwSnsHandleDbWrite(wargs("SnsInfo", cv("wxid_a", 444L, NOW - 3600L, 1)), Long.valueOf(8), "insert");
+checkEq("早于监视起点的历史动态不触发", Integer.valueOf(notified.size()), Integer.valueOf(1));
+
+mwMonitorStartSec = NOW - 300000L;
+mwSnsHandleDbWrite(wargs("SnsInfo", cv("wxid_a", 555L, NOW - 200000L, 1)), Long.valueOf(9), "insert");
+checkEq("超出时效窗口不触发", Integer.valueOf(notified.size()), Integer.valueOf(1));
+mwMaxAgeSec = 0L;
+mwSnsHandleDbWrite(wargs("SnsInfo", cv("wxid_a", 556L, NOW - 200000L, 1)), Long.valueOf(10), "insert");
+checkEq("时效设为不限时旧动态可触发", Integer.valueOf(notified.size()), Integer.valueOf(2));
+mwMaxAgeSec = 86400L;
+mwMonitorStartSec = NOW;
+
+mwSnsHandleDbWrite(wargs("SnsInfo", cv("wxid_a", 666L, NOW, 15)), Integer.valueOf(3), "update");
+checkEq("update 无行号时 localId=-1", notified.get(2), "wxid_a|666|-1|2");
+
+mwConfigSetEnabled(false);
+mwSnsHandleDbWrite(wargs("SnsInfo", cv("wxid_a", 777L, NOW, 1)), Long.valueOf(11), "insert");
+checkEq("总开关关闭时不触发", Integer.valueOf(notified.size()), Integer.valueOf(3));
+mwConfigSetEnabled(true);
+
+System.out.println("\n[4] 参数解析辅助");
+ContentValues t1 = new ContentValues(); t1.put("type", Integer.valueOf(2));
+checkEq("type=2 映射为纯文字", Integer.valueOf(mwSnsDetectType(t1)), Integer.valueOf(0));
+t1.put("type", Integer.valueOf(1));
+checkEq("type=1 映射为图文", Integer.valueOf(mwSnsDetectType(t1)), Integer.valueOf(1));
+t1.put("type", Integer.valueOf(15));
+checkEq("type=15 映射为视频", Integer.valueOf(mwSnsDetectType(t1)), Integer.valueOf(2));
+checkEq("insert 返回行号作为 localId", Integer.valueOf(mwSnsLocalIdFrom(Long.valueOf(99), "insert")), Integer.valueOf(99));
+checkEq("insertWithOnConflict 同上", Integer.valueOf(mwSnsLocalIdFrom(Long.valueOf(100), "insertWithOnConflict")), Integer.valueOf(100));
+checkEq("update 返回行数不作 localId", Integer.valueOf(mwSnsLocalIdFrom(Integer.valueOf(3), "update")), Integer.valueOf(-1));
+checkEq("行号为 0 时判定无效", Integer.valueOf(mwSnsLocalIdFrom(Long.valueOf(0), "insert")), Integer.valueOf(-1));
+check("表名大小写不敏感", mwSnsIsTargetTable("snsinfo") && mwSnsIsTargetTable("SnsInfo"));
+check("其它表名不匹配", !mwSnsIsTargetTable("SnsComment"));
+
+System.out.println("\n[5] 跳转 Intent 组装与降级");
+Intent[] j1 = mwJumpBuild("wxid_a", 123456789L, 42);
+Intent top1 = (Intent) j1[j1.length - 1];
+checkEq("有 localId 时跳详情页", top1.component.getClassName(), "com.tencent.mm.plugin.sns.ui.SnsCommentDetailUI");
+checkEq("详情页 INTENT_SNS_LOCAL_ID", top1.extras.get("INTENT_SNS_LOCAL_ID"), "sns_table_42");
+checkEq("详情页 INTENT_TALKER", top1.extras.get("INTENT_TALKER"), "wxid_a");
+checkEq("详情页附带 INTENT_SNSID 兜底", top1.extras.get("INTENT_SNSID"), "123456789");
+checkEq("数组首元素为微信首页", ((Intent) j1[0]).component.getClassName(), "com.tencent.mm.ui.LauncherUI");
+
+Intent[] j2 = mwJumpBuild("wxid_a", 123456789L, -1);
+Intent top2 = (Intent) j2[j2.length - 1];
+checkEq("无 localId 时降级到作者朋友圈", top2.component.getClassName(), "com.tencent.mm.plugin.sns.ui.SnsUserUI");
+checkEq("作者朋友圈 extra", top2.extras.get("sns_userName"), "wxid_a");
+
+Intent[] j3 = mwJumpBuild("", 123456789L, -1);
+checkEq("无作者时再降级到朋友圈首页", ((Intent) j3[j3.length - 1]).component.getClassName(), "com.tencent.mm.plugin.sns.ui.SnsTimeLineUI");
+checkEq("组件包名固定为微信", ((Intent) j1[0]).component.getPackageName(), "com.tencent.mm");
+
+System.out.println("\n[6] Hook 生命周期");
+int hooked = mwHookInstall(new XC_MethodHook() { protected void afterHookedMethod(XC_MethodHook.MethodHookParam p) throws Throwable { } });
+checkEq("当前环境无 WCDB 类时注册数为 0", Integer.valueOf(hooked), Integer.valueOf(0));
+check("未注册成功时不算已安装", !mwHookInstalled);
+mwHookUninstall();
+check("卸载后句柄清空", mwHookHandles.isEmpty());
+
+System.out.println("\n[7] 去重账本容量与清空");
+mwSeenClear();
+checkEq("清空后账本为空", Integer.valueOf(mwSeenSet.size()), Integer.valueOf(0));
+cfgStore.clear();
+for (int i = 0; i < 520; i++) { mwSeenMark(100000L + i); }
+checkEq("账本按上限淘汰", Integer.valueOf(mwSeenSet.size()), Integer.valueOf(500));
+checkEq("账本顺序表长度一致", Integer.valueOf(mwSeenOrder.size()), Integer.valueOf(500));
+check("最早写入的已被淘汰", !mwSeenContains(100000L));
+check("最近写入的仍在账本", mwSeenContains(100519L));
+mwSeenMark(999999L);
+checkEq("重复登记返回 false", Boolean.valueOf(mwSeenMark(999999L)), Boolean.valueOf(false));
+mwSeenClear();
+checkEq("清空后再次为空", Integer.valueOf(mwSeenSet.size()), Integer.valueOf(0));
+
+System.out.println("\n[8] 名单集合互转");
+checkEq("集合往返保持一致", Integer.valueOf(mwUtilParseSet(mwUtilJoinSet(mwUtilParseSet("wxid_a,wxid_b,wxid_c"))).size()), Integer.valueOf(3));
+checkEq("空集合序列化为空串", mwUtilJoinSet(new HashSet()), "");
+
+System.out.println("\n================ 结果 ================");
+System.out.println("通过 " + mwTestPass + " 项，失败 " + mwTestFail + " 项");
+if (mwTestFail > 0) System.exit(1);

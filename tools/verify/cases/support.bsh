@@ -1,0 +1,21 @@
+// ================= 测试用：WA 全局接口与宿主环境桩 =================
+HashMap cfgStore = new HashMap();
+Object hostContext = new android.content.Context();
+
+String getString(String k, String d) { Object v = cfgStore.get(k); return v == null ? d : String.valueOf(v); }
+boolean getBoolean(String k, boolean d) { Object v = cfgStore.get(k); return v == null ? d : ((Boolean) v).booleanValue(); }
+long getLong(String k, long d) { Object v = cfgStore.get(k); return v == null ? d : ((Number) v).longValue(); }
+void putString(String k, String v) { cfgStore.put(k, v); }
+void putBoolean(String k, boolean v) { cfgStore.put(k, Boolean.valueOf(v)); }
+void putLong(String k, long v) { cfgStore.put(k, Long.valueOf(v)); }
+void log(Object m) { System.out.println("  [log] " + m); }
+void toast(String s) { }
+android.app.Activity getTopActivity() { return null; }
+String getFriendRemarkName(String w) { return ""; }
+String getFriendNickName(String w) { return "nick_" + w; }
+String getFriendName(String w) { return "name_" + w; }
+List getFriendList() { List l = new ArrayList(); return l; }
+
+// 拦截通知，只记录调用
+ArrayList notified = new ArrayList();
+void mwNotifyNewPost(String u, long s, int l, String t, int pt) { notified.add(u + "|" + s + "|" + l + "|" + pt); }

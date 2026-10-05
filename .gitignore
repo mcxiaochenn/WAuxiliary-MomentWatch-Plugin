@@ -1,0 +1,19 @@
+# ============================================================
+# 插件实际运行部分：等待真机验证通过后再推送。
+# 验证通过后删除本节，即可正常提交 plugins/ 目录。
+# 详见 README「交付状态」。
+# ============================================================
+/plugins/v127/mcxiaochen/MomentWatch/
+
+# 验证工具链的构建产物
+tools/verify/out/
+tools/verify/*.jar
+tools/verify/combined.bsh
+tools/verify/result.txt
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db

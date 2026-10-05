@@ -1,0 +1,6 @@
+# 统一换行符：仓库内一律使用 LF，避免 Linux/macOS 上执行 .sh 时因 CRLF 失败
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jar binary
