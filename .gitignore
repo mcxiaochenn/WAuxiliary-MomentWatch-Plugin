@@ -17,3 +17,6 @@ tools/verify/result.txt
 *.iml
 .DS_Store
 Thumbs.db
+
+# 助手工作区的本地记忆与临时数据
+.workbuddy/
